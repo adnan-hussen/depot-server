@@ -1,7 +1,7 @@
 import {Pool} from "pg"
 
 const pool = new Pool({
-    connectionString:process.env.CONNECTIONSTRING
+    connectionString:process.env.CONNECTIONSTRING,
 })
 
 const initDb = async () => {
@@ -15,8 +15,24 @@ const initDb = async () => {
             );`);
         console.log("table initialized")
     } catch(err){
-        console.error(err);
+        console.error(err)}
+    
+    try {
+        await pool.query(`
+            create table if not exists metadata (
+                id serial primary key not null,
+                userid int,
+                originalname text not null,
+                blobname text not null,
+                mimetype text not null,
+                size int not null,
+                createdAt timestamptz not null default now(),
+                foreign key (userid) references users(id) on delete cascade
+            );`)
+    } catch(err) {
+        console.log(err)
     }
+    
 }
 
 const saveUser = async (user) => {
@@ -51,10 +67,6 @@ const getUserByGoogleId = async (googleid) => {
     return res.rows[0]
 }
 
-// const getCount = async () => {
-//     const res = await pool.query(`select count(*) from users`)
-//     return res.rows[0].count;
-// }
 
 const updateGoogleId = async (googleid, email) => {
     await pool.query(`update users set googleid = $1 where email = $2`,[googleid, email])
@@ -63,4 +75,35 @@ const updateGoogleId = async (googleid, email) => {
 const updatePasswordHash = async (passwordhash, email) => {
     await pool.query(`update users set passwordhash = $1 where email = $2`,[passwordhash, email])
 }
-export {initDb, saveUser, getUserById, getUserByEmail, getUserByGoogleId, updateGoogleId, updatePasswordHash, getLocalUser}
+
+const saveFileMetadata = async ({ userid, originalname, blobname, mimetype, size }) => {
+    const res = await pool.query(
+        `insert into metadata(userid, originalname, blobname, mimetype, size) values($1,$2,$3,$4,$5) returning *`,
+        [userid, originalname, blobname, mimetype, size]
+    );
+    return res.rows[0];
+}
+
+const getFilesForUser = async (userid) => {
+    const res = await pool.query(`select * from metadata where userid=$1 order by createdat desc`,[userid])
+    return res.rows
+}
+
+const getFileById = async (id) => {
+    const res = await pool.query(`select * from metadata where id=$1`, [id]);
+    return res.rows[0]
+}
+
+const deleteFileMetadata = async (id) => {
+    const res = await pool.query (`delete from metadata where id=$1 returning *`, [id])
+    return res.rows[0]
+}
+
+export {
+        initDb, saveUser, getUserById, 
+        getUserByEmail, getUserByGoogleId, 
+        updateGoogleId, updatePasswordHash,
+        getLocalUser, saveFileMetadata, 
+        getFilesForUser, getFileById, 
+        deleteFileMetadata
+    }
