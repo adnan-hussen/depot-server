@@ -1,22 +1,36 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+
 import { initDb, saveUser, getUserById, 
-        getUserByEmail, getUserByGoogleId, 
-        updateGoogleId, getLocalUser} from './config/db.js';
+    getUserByEmail, getUserByGoogleId, 
+    updateGoogleId, getLocalUser,
+    saveFileMetadata,
+    getFileById,
+    deleteFileMetadata,
+    getFilesForUser} from './config/db.js';
+
 import passport from 'passport';
 import session from 'express-session';
 import { Strategy as LocalStrategy } from 'passport-local';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import bcrypt from 'bcryptjs';
+
 import { createClient } from 'redis';
 import {RedisStore} from 'connect-redis';
+
+import multer from "multer";
+import { uploadFile, downloadFile, deleteFile } from './services/azureStorage.js';
+import {Readable} from "stream"
+
+import { errorMiddleware } from './middleware/errorMiddleware.js';
 
 const redisClient = createClient();
 redisClient.connect().then(()=>console.log("connected to redis")).catch(console.error)
 
 await initDb()
 
+const PORT = process.env.PORT || 3000;
 const app = express();
 app.use(express.json())
 app.use(express.urlencoded())
@@ -33,17 +47,23 @@ let redisStore = new RedisStore({
 app.use(
     session({
         store:redisStore,
-        secret:"aldkfn4l",
+        secret:process.env.SESSION_SECRET,
         resave:false,
         saveUninitialized: false,
         cookie: {
-            secure: false,
+            secure: process.env.NODE_ENV==="production",
+            httpOnly:true,
             sameSite: "lax",
         },
     }))
 
 app.use(passport.initialize())
 app.use(passport.session())
+app.use((req, res, next) => {
+  res.header('Access-Control-Expose-Headers', 'Content-Disposition'); 
+  next();
+});
+
 
 
 passport.use(
@@ -63,7 +83,6 @@ passport.use(
     })
 );
 
-//todo: find a way to add id to the user object
 
 passport.use(
     new GoogleStrategy({
@@ -107,6 +126,7 @@ function checkAuthentication(req, res, next) {
     if (req.isAuthenticated()) return next();
     res.json({message: "Unauthorized"})
 }
+
 
 app.post("/register", async(req, res, next) => {
     const { email, password } = req.body;
@@ -157,7 +177,101 @@ app.get("/profile", checkAuthentication, (req, res) => {
     res.json({user:req.user})
 });
 
-const PORT = process.env.PORT || 3000;
+
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 50 * 1024 *1024
+    },
+});
+function bufferToStream(buffer) {
+    const readable = new Readable();
+    readable.push(buffer);
+    readable.push(null);
+    return readable;
+}
+
+app.get('/files', checkAuthentication, async (req, res, next) => {
+    try {
+        const data = await getFilesForUser(req.user.id);
+        res.status(201).json(data)
+    } catch (err) {
+        next(err)
+    }
+})
+
+app.post('/files', checkAuthentication, upload.single('file'), async (req, res, next) => {
+    try {
+        if (!req.file) return res.status(400).json({message: 'No file provided'});
+
+        const {buffer, originalname, mimetype, size} = req.file;
+        const stream= bufferToStream(buffer)
+        const { blobName, url } = await uploadFile({
+            stream: stream,
+            userId: req.user.id,
+            originalName: originalname,
+            mimeType: mimetype
+        });
+
+        const fileRecord = await saveFileMetadata({
+            userid: Number(req.user.id),
+            originalname,
+            blobname: blobName,
+            mimetype,
+            size: Number(size)
+        });
+        res.status(201).json({
+            message: 'File uploaded',
+            file: {
+                id: fileRecord.id,
+                originalName: fileRecord.originalname,
+                size:fileRecord.size,
+                mimetype: fileRecord.mimetype,
+                createdAt: fileRecord.createdat,
+                downloadUrl: url
+            }
+        });
+    } catch(err) {
+        next(err);
+    }
+})
+
+app.get('/files/:id/download', checkAuthentication, async (req, res, next)=> {
+    try {
+        const file = await getFileById(req.params.id);
+        if (!file || file.userid !== req.user.id) {
+            return res.status(404).json({message: "File not found"})
+        }
+
+        const blobDownload = await downloadFile(file.blobname);
+        res.setHeader('Content-Type', file.mimetype);
+        res.setHeader(
+            'content-disposition',
+            `attachment; filename=${file.originalname}`
+        );
+        blobDownload.readableStreamBody.pipe(res)
+    } catch(err) {
+        next(err)
+    }
+});
+
+app.delete('/files/:id', checkAuthentication, async (req, res, next) => {
+    try {
+        const file = await getFileById(req.params.id);
+        if (!file || req.user.id !== file.userid) {
+            return res.status(404).json({message: "File not found"})
+        }
+        await deleteFile(file.blobname)
+        await deleteFileMetadata(file.id)
+        res.json({ message: 'File deleted' });
+    } catch (err) {
+        next(err);
+    }
+})
+
+app.use(errorMiddleware)
+
+
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`)
 })
