@@ -11,15 +11,18 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@azure/storage-blob": "^12.28.0",
     "bcryptjs": "^3.0.2",
     "body-parser": "^2.2.0",
     "connect-redis": "^9.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
+    "csurf": "^1.11.0",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "express-session": "^1.18.2",
     "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "passport-jwt": "^4.0.1",
@@ -27,5 +30,5 @@
     "pg": "^8.16.3",
     "redis": "^5.8.3"
   },
-  "type":"module"
+  "type": "module"
 }
