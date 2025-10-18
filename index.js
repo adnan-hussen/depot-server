@@ -3,12 +3,9 @@ import express from 'express';
 import cors from 'cors';
 
 import { initDb, saveUser, getUserById, 
-    getUserByEmail, getUserByGoogleId, 
-    updateGoogleId, getLocalUser,
-    saveFileMetadata,
-    getFileById,
-    deleteFileMetadata,
-    getFilesForUser} from './config/db.js';
+    getUserByEmail, getUserByGoogleId, updateGoogleId, 
+    getLocalUser, saveFileMetadata, getFileById,
+    deleteFileMetadata, getFilesForUser, usedSpace} from './config/db.js';
 
 import passport from 'passport';
 import session from 'express-session';
@@ -26,7 +23,7 @@ import {Readable} from "stream"
 import { errorMiddleware } from './middleware/errorMiddleware.js';
 
 const redisClient = createClient();
-redisClient.connect().then(()=>console.log("connected to redis")).catch(console.error)
+redisClient.connect().catch(console.error);
 
 await initDb()
 
@@ -64,22 +61,24 @@ app.use((req, res, next) => {
   next();
 });
 
-
-
 passport.use(
     new LocalStrategy({usernameField: "email"}, async (email, password, done) => {
-        const user = await getUserByEmail(email);
+        try {
+            const user = await getUserByEmail(email);
 
-        if (!user) return done(null, false, {message: "User not found"});
-        if (user.googleId && !user.passwordHash) {
-            return done(null, false, {message: "This account uses Google login."})
+            if (!user) return done(null, false, {message: "User not found"});
+            if (user.googleId && !user.passwordHash) {
+                return done(null, false, {message: "This account uses Google login."})
+            }
+            if (!user.passwordhash) return done(null, false, {message: "Can't login with email into this account"})
+
+            const match = await bcrypt.compare(password, user.passwordhash);
+            if (!match) return done(null, false, {message: "Password doesn't match"});
+
+            return done(null, user)
+        } catch (err) {
+            return done(err);
         }
-        if (!user.passwordhash) return done(null, false, {message: "Can't login with email into this account"})
-
-        const match = await bcrypt.compare(password, user.passwordhash);
-        if (!match) return done(null, false, {message: "Password doesn't match"});
-
-        return done(null, user)
     })
 );
 
@@ -118,8 +117,12 @@ passport.serializeUser((user, done)=> {
 });
 
 passport.deserializeUser(async (id, done) => {
-    const user = await getUserById(id)
-    done(null, user);
+    try {
+        const user = await getUserById(id)
+        done(null, user);
+    } catch (err) {
+        done(err, null);
+    }
 });
 
 function checkAuthentication(req, res, next) {
@@ -129,22 +132,26 @@ function checkAuthentication(req, res, next) {
 
 
 app.post("/register", async(req, res, next) => {
-    const { email, password } = req.body;
-    const existingUser = await getUserByEmail(email)
-    if (existingUser) return res.status(400).json({message:"User already exists"});
+    try {
+        const { email, password } = req.body;
+        const existingUser = await getUserByEmail(email)
+        if (existingUser) return res.status(400).json({message:"User already exists"});
 
-    const passwordhash = await bcrypt.hash(password, 10);
-    const newUser = {email, passwordhash}
-    await saveUser(newUser)
-    const storedNewUser = await getUserByEmail(email)
+        const passwordhash = await bcrypt.hash(password, 10);
+        const newUser = {email, passwordhash}
+        await saveUser(newUser)
+        const storedNewUser = await getUserByEmail(email)
 
-    req.login(storedNewUser, (err)=>{
-        if (err) return next(err);
-        return res.json({
-            message: "User registered and logged in",
-            user: {id: newUser.id, email: newUser.email}
+        req.login(storedNewUser, (err)=>{
+            if (err) return next(err);
+            return res.json({
+                message: "User registered and logged in",
+                user: {id: newUser.id, email: newUser.email}
+            })
         })
-    })
+    } catch (err) {
+        next(err);
+    }
 });
 
 app.post("/login", (req, res, next) => {
@@ -181,7 +188,7 @@ app.get("/profile", checkAuthentication, (req, res) => {
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
-        fileSize: 50 * 1024 *1024
+        fileSize: 5 * 1024 *1024
     },
 });
 function bufferToStream(buffer) {
@@ -203,36 +210,47 @@ app.get('/files', checkAuthentication, async (req, res, next) => {
 app.post('/files', checkAuthentication, upload.single('file'), async (req, res, next) => {
     try {
         if (!req.file) return res.status(400).json({message: 'No file provided'});
-
         const {buffer, originalname, mimetype, size} = req.file;
-        const stream= bufferToStream(buffer)
-        const { blobName, url } = await uploadFile({
-            stream: stream,
-            userId: req.user.id,
-            originalName: originalname,
-            mimeType: mimetype
-        });
-
-        const fileRecord = await saveFileMetadata({
-            userid: Number(req.user.id),
-            originalname,
-            blobname: blobName,
-            mimetype,
-            size: Number(size)
-        });
-        res.status(201).json({
-            message: 'File uploaded',
-            file: {
-                id: fileRecord.id,
-                originalName: fileRecord.originalname,
-                size:fileRecord.size,
-                mimetype: fileRecord.mimetype,
-                createdAt: fileRecord.createdat,
-                downloadUrl: url
-            }
-        });
+        
+        if (size <= ((1024 * 1024 * 100) - await usedSpace(req.user.id))) {
+            const stream= bufferToStream(buffer)
+            const { blobName, url } = await uploadFile({
+                stream: stream,
+                userId: req.user.id,
+                originalName: originalname,
+                mimeType: mimetype
+            });
+            const fileRecord = await saveFileMetadata({
+                userid: Number(req.user.id),
+                originalname,
+                blobname: blobName,
+                mimetype,
+                size: Number(size)
+            });
+            res.status(201).json({
+                message: 'File uploaded',
+                file: {
+                    id: fileRecord.id,
+                    originalName: fileRecord.originalname,
+                    size:fileRecord.size,
+                    mimetype: fileRecord.mimetype,
+                    createdAt: fileRecord.createdat,
+                    downloadUrl: url
+                }
+            })}
+        else {
+            return res.status(413).json({message: "Insufficient storage space"})}
     } catch(err) {
         next(err);
+    }
+})
+
+app.get('/storagespace', checkAuthentication, async(req,res,next)=> {
+    try {
+        const space = await usedSpace(req.user.id);
+        res.status(201).json(space)
+    } catch(err) {
+        next(err)
     }
 })
 
@@ -240,15 +258,13 @@ app.get('/files/:id/download', checkAuthentication, async (req, res, next)=> {
     try {
         const file = await getFileById(req.params.id);
         if (!file || file.userid !== req.user.id) {
-            return res.status(404).json({message: "File not found"})
-        }
+            return res.status(404).json({message: "File not found"})}
 
         const blobDownload = await downloadFile(file.blobname);
         res.setHeader('Content-Type', file.mimetype);
         res.setHeader(
             'content-disposition',
-            `attachment; filename=${file.originalname}`
-        );
+            `attachment; filename=${file.originalname}`);
         blobDownload.readableStreamBody.pipe(res)
     } catch(err) {
         next(err)

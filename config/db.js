@@ -99,11 +99,11 @@ const deleteFileMetadata = async (id) => {
     return res.rows[0]
 }
 
-const availableSpace = async (userid) => {
+const usedSpace = async (userid) => {
     const res = await pool.query(`select size from metadata where userid=$1`, [userid]);
     const data = res.rows;
     const usedSpace = data.reduce((total, row)=>total+row.size,0);
-    return (1024*1024*100)-usedSpace
+    return usedSpace
 }
 
 export {
@@ -112,5 +112,5 @@ export {
         updateGoogleId, updatePasswordHash,
         getLocalUser, saveFileMetadata, 
         getFilesForUser, getFileById, 
-        deleteFileMetadata, availableSpace
+        deleteFileMetadata, usedSpace
     }
