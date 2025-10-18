@@ -176,7 +176,7 @@ app.get("/auth/google", passport.authenticate("google", {scope:["profile", "emai
 
 app.get("/auth/google/callback", passport.authenticate("google", {failureRedirect: "/", session: true}),
     (req, res) => {
-        res.redirect("http://localhost:5173/");
+        res.redirect("https://depot-theta.vercel.app/");
     }
 );
 
