@@ -34,7 +34,7 @@ await initDb()
 const PORT = process.env.PORT || 3000;
 const app = express();
 
-
+//add trust proxy for vercel
 if (process.env.NODE_ENV === 'production') {
     app.set('trust proxy', 1);
 }
@@ -42,7 +42,7 @@ if (process.env.NODE_ENV === 'production') {
 app.use(express.json())
 app.use(express.urlencoded())
 app.use(cors({
-    origin:["https://depot-theta.vercel.app", "http://localhost:5173"],
+    origin:"https://depot-theta.vercel.app",
     credentials:true,
 }));
 
