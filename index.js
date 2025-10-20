@@ -98,7 +98,7 @@ passport.use(
     new GoogleStrategy({
         clientID:"620475659289-g8jv5kqstti23jk47knovhpff6ckdfig.apps.googleusercontent.com",
         clientSecret:"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",
-        callbackURL:`${process.env.BACKEND_URI}/auth/google/callback`
+        callbackURL:`/auth/google/callback`
     }, async (accessToken, refreshToken, profile, done) => {
         try {
             const email = profile.emails[0].value
