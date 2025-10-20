@@ -22,13 +22,23 @@ import {Readable} from "stream"
 
 import { errorMiddleware } from './middleware/errorMiddleware.js';
 
-const redisClient = createClient();
-redisClient.connect().catch(console.error);
+const redisClient = createClient({
+    url: process.env.REDIS_URL
+});
+redisClient.on('error', (err) => console.error('Redis Client Error', err));
+redisClient.on('connect', () => console.log('Redis Connected'));
+await redisClient.connect();
 
 await initDb()
 
 const PORT = process.env.PORT || 3000;
 const app = express();
+
+
+if (process.env.NODE_ENV === 'production') {
+    app.set('trust proxy', 1);
+}
+
 app.use(express.json())
 app.use(express.urlencoded())
 app.use(cors({
@@ -128,7 +138,7 @@ passport.deserializeUser(async (id, done) => {
 
 function checkAuthentication(req, res, next) {
     if (req.isAuthenticated()) return next();
-    res.json({message: "Unauthorized"})
+    res.status(401).json({message: "Unauthorized"})
 }
 
 
