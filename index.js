@@ -21,6 +21,7 @@ import { uploadFile, downloadFile, deleteFile } from './services/azureStorage.js
 import {Readable} from "stream"
 
 import { errorMiddleware } from './middleware/errorMiddleware.js';
+import { rateLimit } from 'express-rate-limit'
 
 const redisClient = createClient({
     url: process.env.REDIS_URL
@@ -30,9 +31,15 @@ redisClient.on('connect', () => console.log('Redis Connected'));
 await redisClient.connect();
 
 await initDb()
+const rateLimiter = rateLimit({
+    limit: 100,
+    windowMs: 15 * 60 * 1000,
+    message: "Too many requests, please try again later"
+})
 
 const PORT = process.env.PORT || 3000;
 const app = express();
+
 
 //add trust proxy for vercel
 if (process.env.NODE_ENV === 'production') {
@@ -45,6 +52,7 @@ app.use(cors({
     origin:"https://depot-theta.vercel.app",
     credentials:true,
 }));
+app.use(rateLimiter)
 
 
 let redisStore = new RedisStore({
