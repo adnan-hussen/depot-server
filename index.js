@@ -17,7 +17,7 @@ import { createClient } from 'redis';
 import {RedisStore} from 'connect-redis';
 
 import multer from "multer";
-import { uploadFile, downloadFile, deleteFile } from './services/azureStorage.js';
+import { uploadFile, downloadFile, deleteFile } from './services/gcsStorage.js';
 import {Readable} from "stream"
 
 import { errorMiddleware } from './middleware/errorMiddleware.js';
@@ -271,12 +271,13 @@ app.get('/files/:id/download', checkAuthentication, async (req, res, next)=> {
         if (!file || file.userid !== req.user.id) {
             return res.status(404).json({message: "File not found"})}
 
-        const blobDownload = await downloadFile(file.blobname);
+        const fileStream = downloadFile(file.blobname);
         res.setHeader('Content-Type', file.mimetype);
         res.setHeader(
             'content-disposition',
             `attachment; filename=${file.originalname}`);
-        blobDownload.readableStreamBody.pipe(res)
+        fileStream.on('error', next);
+        fileStream.pipe(res)
     } catch(err) {
         next(err)
     }
